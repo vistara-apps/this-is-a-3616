@@ -25,22 +25,7 @@ const PricingPage = () => {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-dark py-16">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <SubscriptionManager 
-          currentPlan={userPlan}
-          onPlanChange={(newPlan) => {
-            setUserPlan(newPlan)
-          }}
-        />
-      </div>
-    </div>
-  )
-}
-
-// Keep the old plans structure for reference but don't use it
-const oldPlans = [
+  const plans = [
     {
       name: "Free",
       price: "$0",
@@ -197,6 +182,12 @@ const oldPlans = [
                   {plan.buttonText}
                 </Link>
               </motion.div>
-// ... rest of old content removed for brevity ...]
+            )
+          })}
+        </div>
+      </section>
+    </div>
+  )
+}
 
 export default PricingPage
