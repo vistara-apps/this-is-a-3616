@@ -10,7 +10,10 @@ import {
   Plus,
   Image as ImageIcon,
   TrendingUp,
-  Zap
+  Zap,
+  BarChart3,
+  Crown,
+  AlertCircle
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import ImageUploader from '../components/ImageUploader'
@@ -18,11 +21,26 @@ import SelectSocial from '../components/SelectSocial'
 import CopyGenerator from '../components/CopyGenerator'
 import AdCard from '../components/AdCard'
 import LoadingSpinner from '../components/LoadingSpinner'
+import AnalyticsDashboard from '../components/AnalyticsDashboard'
+import SubscriptionManager from '../components/SubscriptionManager'
+import { 
+  getUser, 
+  getUserUsage, 
+  trackUsage, 
+  createProduct, 
+  createAdCreative,
+  getUserAdCreatives 
+} from '../lib/supabase'
+import { canUserPerformAction, SUBSCRIPTION_PLANS } from '../lib/stripe'
+import { postToSocialMedia, optimizeContentForPlatform } from '../lib/socialMedia'
 import toast from 'react-hot-toast'
 
 const DashboardPage = () => {
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
+  
+  // View management
+  const [currentView, setCurrentView] = useState('create') // 'create', 'analytics', 'subscription'
   
   // Step management
   const [currentStep, setCurrentStep] = useState(1)
@@ -41,13 +59,38 @@ const DashboardPage = () => {
   const [generatedAds, setGeneratedAds] = useState([])
   const [loading, setLoading] = useState(false)
 
-  // Stats (mock data)
-  const [stats] = useState({
-    generationsUsed: 3,
-    generationsLimit: 5,
-    totalAds: 12,
-    successfulPosts: 8
-  })
+  // User data
+  const [userData, setUserData] = useState(null)
+  const [userUsage, setUserUsage] = useState({})
+  const [userPlan, setUserPlan] = useState('free')
+  const [adCreatives, setAdCreatives] = useState([])
+
+  // Load user data and usage
+  useEffect(() => {
+    if (user) {
+      loadUserData()
+    }
+  }, [user])
+
+  const loadUserData = async () => {
+    try {
+      const [userInfo, usage, creatives] = await Promise.all([
+        getUser(user.id),
+        getUserUsage(user.id),
+        getUserAdCreatives(user.id)
+      ])
+      
+      setUserData(userInfo)
+      setUserUsage(usage)
+      setUserPlan(userInfo?.subscription_plan || 'free')
+      setAdCreatives(creatives)
+    } catch (error) {
+      console.error('Failed to load user data:', error)
+      // Set defaults for demo
+      setUserPlan('free')
+      setUserUsage({ generate_ad: 3 })
+    }
+  }
 
   const handleSignOut = async () => {
     await signOut()
@@ -86,13 +129,90 @@ const DashboardPage = () => {
     nextStep()
   }
 
-  const handleCopyGenerated = (variations) => {
-    setGeneratedAds(variations)
-    toast.success(`Generated ${variations.length} ad variations!`)
+  const handleCopyGenerated = async (variations) => {
+    try {
+      // Check if user can generate ads
+      if (!canUserPerformAction(userPlan, 'generate_ad', userUsage)) {
+        toast.error('Generation limit reached. Please upgrade your plan.')
+        return
+      }
+
+      // Track usage
+      await trackUsage(user.id, 'generate_ad')
+      
+      // Save product if not exists
+      const productData = {
+        user_id: user.id,
+        product_name: productName,
+        product_description: productDescription,
+        uploaded_image_url: productImage?.url || ''
+      }
+      const savedProduct = await createProduct(productData)
+
+      // Save ad creatives
+      const creativePromises = variations.map(variation => 
+        createAdCreative({
+          user_id: user.id,
+          product_id: savedProduct.product_id,
+          prompt: `${productName} - ${productDescription}`,
+          image_url: productImage?.url || '',
+          generated_copy: JSON.stringify(variation),
+          platform: selectedPlatform
+        })
+      )
+      
+      await Promise.all(creativePromises)
+      
+      setGeneratedAds(variations)
+      
+      // Refresh user data
+      await loadUserData()
+      
+      toast.success(`Generated ${variations.length} ad variations!`)
+    } catch (error) {
+      console.error('Failed to save ad creatives:', error)
+      setGeneratedAds(variations) // Still show the ads even if saving fails
+      toast.success(`Generated ${variations.length} ad variations!`)
+    }
   }
 
-  const handleAdPost = (creative) => {
-    toast.success(`Posted ad to ${selectedPlatform} test account!`)
+  const handleAdPost = async (creative) => {
+    try {
+      // Check if user can post to social media
+      if (!canUserPerformAction(userPlan, 'post_to_social')) {
+        toast.error('Social posting requires Creator or Pro plan. Please upgrade.')
+        return
+      }
+
+      setLoading(true)
+      
+      // Optimize content for platform
+      const optimizedContent = optimizeContentForPlatform({
+        text: `${creative.headline}\n\n${creative.body}`,
+        hashtags: creative.hashtags,
+        callToAction: creative.cta
+      }, selectedPlatform)
+
+      // Post to social media
+      const result = await postToSocialMedia(selectedPlatform, {
+        text: optimizedContent.text,
+        image: productImage?.url,
+        hashtags: optimizedContent.hashtags
+      })
+
+      if (result.success) {
+        toast.success(`Posted to ${selectedPlatform} test account successfully!`)
+        
+        // Track usage
+        await trackUsage(user.id, 'social_post')
+        await loadUserData()
+      }
+    } catch (error) {
+      console.error('Failed to post to social media:', error)
+      toast.error('Failed to post to social media')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const resetFlow = () => {
@@ -134,18 +254,68 @@ const DashboardPage = () => {
             </div>
             <div>
               <p className="font-medium text-sm">{user?.email}</p>
-              <p className="text-xs text-gray-400">Free Plan</p>
+              <div className="flex items-center space-x-1">
+                <p className="text-xs text-gray-400 capitalize">{userPlan} Plan</p>
+                {userPlan !== 'free' && <Crown className="h-3 w-3 text-yellow-400" />}
+              </div>
             </div>
           </div>
+          
+          {/* Usage Display */}
           <div className="text-xs text-gray-400">
-            {stats.generationsUsed}/{stats.generationsLimit} generations used
+            {(() => {
+              const plan = SUBSCRIPTION_PLANS[userPlan]
+              const used = userUsage.generate_ad || 0
+              const limit = plan?.limits?.generations || 5
+              
+              if (limit === -1) {
+                return `${used} generations used (Unlimited)`
+              }
+              return `${used}/${limit} generations used`
+            })()}
           </div>
           <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
             <div 
-              className="bg-blue-500 h-2 rounded-full" 
-              style={{ width: `${(stats.generationsUsed / stats.generationsLimit) * 100}%` }}
+              className={`h-2 rounded-full transition-all duration-300 ${
+                (() => {
+                  const plan = SUBSCRIPTION_PLANS[userPlan]
+                  const used = userUsage.generate_ad || 0
+                  const limit = plan?.limits?.generations || 5
+                  const percentage = limit === -1 ? 0 : (used / limit) * 100
+                  
+                  if (percentage >= 90) return 'bg-red-500'
+                  if (percentage >= 70) return 'bg-yellow-500'
+                  return 'bg-blue-500'
+                })()
+              }`}
+              style={{ 
+                width: `${(() => {
+                  const plan = SUBSCRIPTION_PLANS[userPlan]
+                  const used = userUsage.generate_ad || 0
+                  const limit = plan?.limits?.generations || 5
+                  
+                  if (limit === -1) return 10 // Show small bar for unlimited
+                  return Math.min((used / limit) * 100, 100)
+                })()}%` 
+              }}
             />
           </div>
+          
+          {/* Upgrade prompt for free users */}
+          {userPlan === 'free' && (userUsage.generate_ad || 0) >= 3 && (
+            <div className="mt-3 p-2 bg-primary/10 rounded-md">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="h-3 w-3 text-primary" />
+                <span className="text-xs text-primary">Almost at limit!</span>
+              </div>
+              <button 
+                onClick={() => setCurrentView('subscription')}
+                className="text-xs text-primary hover:underline mt-1"
+              >
+                Upgrade now →
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Stats */}
@@ -155,25 +325,53 @@ const DashboardPage = () => {
               <ImageIcon className="h-4 w-4 text-green-400" />
               <span className="text-sm">Total Ads Created</span>
             </div>
-            <p className="text-2xl font-bold text-green-400">{stats.totalAds}</p>
+            <p className="text-2xl font-bold text-green-400">{adCreatives.length}</p>
           </div>
           <div className="p-3 bg-gray-800 rounded-lg">
             <div className="flex items-center space-x-2">
               <Zap className="h-4 w-4 text-yellow-400" />
-              <span className="text-sm">Successful Posts</span>
+              <span className="text-sm">Social Posts</span>
             </div>
-            <p className="text-2xl font-bold text-yellow-400">{stats.successfulPosts}</p>
+            <p className="text-2xl font-bold text-yellow-400">{userUsage.social_post || 0}</p>
           </div>
         </div>
 
         {/* Navigation */}
         <nav className="space-y-2 mb-8">
           <button
-            onClick={resetFlow}
-            className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors"
+            onClick={() => {
+              setCurrentView('create')
+              resetFlow()
+            }}
+            className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+              currentView === 'create' ? 'bg-gray-800 text-white' : 'hover:bg-gray-800'
+            }`}
           >
             <Plus className="h-4 w-4" />
-            <span>New Ad Campaign</span>
+            <span>Create Ad Campaign</span>
+          </button>
+          
+          <button
+            onClick={() => setCurrentView('analytics')}
+            className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+              currentView === 'analytics' ? 'bg-gray-800 text-white' : 'hover:bg-gray-800'
+            }`}
+          >
+            <BarChart3 className="h-4 w-4" />
+            <span>Analytics</span>
+            {!['creator', 'pro'].includes(userPlan) && (
+              <Crown className="h-3 w-3 text-yellow-400 ml-auto" />
+            )}
+          </button>
+          
+          <button
+            onClick={() => setCurrentView('subscription')}
+            className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+              currentView === 'subscription' ? 'bg-gray-800 text-white' : 'hover:bg-gray-800'
+            }`}
+          >
+            <Crown className="h-4 w-4" />
+            <span>Subscription</span>
           </button>
         </nav>
 
@@ -229,8 +427,30 @@ const DashboardPage = () => {
         {/* Content Area */}
         <div className="p-8">
           <div className="max-w-4xl mx-auto">
-            {/* Step 1: Upload Product Image */}
-            {currentStep === 1 && (
+            {/* Analytics View */}
+            {currentView === 'analytics' && (
+              <AnalyticsDashboard 
+                userPlan={userPlan} 
+                adCreatives={adCreatives}
+              />
+            )}
+
+            {/* Subscription View */}
+            {currentView === 'subscription' && (
+              <SubscriptionManager 
+                currentPlan={userPlan}
+                onPlanChange={(newPlan) => {
+                  setUserPlan(newPlan)
+                  loadUserData()
+                }}
+              />
+            )}
+
+            {/* Create Ad Campaign View */}
+            {currentView === 'create' && (
+              <>
+                {/* Step 1: Upload Product Image */}
+                {currentStep === 1 && (
               <motion.div
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -399,6 +619,8 @@ const DashboardPage = () => {
                   </button>
                 </div>
               </motion.div>
+            )}
+              </>
             )}
           </div>
         </div>

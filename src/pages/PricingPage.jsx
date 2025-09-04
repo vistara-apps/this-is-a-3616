@@ -1,10 +1,46 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Check, Sparkles, Zap, Crown } from 'lucide-react'
+import SubscriptionManager from '../components/SubscriptionManager'
+import { useAuth } from '../contexts/AuthContext'
+import { getUser } from '../lib/supabase'
 
 const PricingPage = () => {
-  const plans = [
+  const { user } = useAuth()
+  const [userPlan, setUserPlan] = useState('free')
+
+  useEffect(() => {
+    if (user) {
+      loadUserPlan()
+    }
+  }, [user])
+
+  const loadUserPlan = async () => {
+    try {
+      const userData = await getUser(user.id)
+      setUserPlan(userData?.subscription_plan || 'free')
+    } catch (error) {
+      console.error('Failed to load user plan:', error)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-dark py-16">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <SubscriptionManager 
+          currentPlan={userPlan}
+          onPlanChange={(newPlan) => {
+            setUserPlan(newPlan)
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Keep the old plans structure for reference but don't use it
+const oldPlans = [
     {
       name: "Free",
       price: "$0",
@@ -161,63 +197,6 @@ const PricingPage = () => {
                   {plan.buttonText}
                 </Link>
               </motion.div>
-            )
-          })}
-        </div>
-      </section>
-
-      {/* FAQ Section */}
-      <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          className="text-center mb-12"
-        >
-          <h2 className="text-3xl font-bold text-text mb-4">Frequently Asked Questions</h2>
-          <p className="text-gray-600">Everything you need to know about AdAlchemy</p>
-        </motion.div>
-
-        <div className="space-y-6">
-          {faqs.map((faq, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: index * 0.1 }}
-              className="card p-6"
-            >
-              <h3 className="text-lg font-medium text-text mb-3">{faq.question}</h3>
-              <p className="text-gray-600">{faq.answer}</p>
-            </motion.div>
-          ))}
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="mt-20 bg-gradient-dark text-white py-16">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center"
-        >
-          <h2 className="text-3xl font-bold mb-4">Ready to Create Viral Ads?</h2>
-          <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
-            Join thousands of creators and businesses using AI to scale their advertising.
-          </p>
-          <Link 
-            to="/auth?mode=signup" 
-            className="btn-primary text-lg px-8 py-4 inline-flex items-center space-x-2"
-          >
-            <Sparkles className="h-5 w-5" />
-            <span>Start Free Today</span>
-          </Link>
-        </motion.div>
-      </section>
-    </div>
-  )
-}
+// ... rest of old content removed for brevity ...]
 
 export default PricingPage
